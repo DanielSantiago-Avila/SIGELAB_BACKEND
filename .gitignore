@@ -1,0 +1,16 @@
+
+.vs/
+bin/
+obj/
+publish/
+
+*.user
+*.suo
+
+# Archivos de configuración local con posibles secretos
+appsettings.Development.json
+
+# Variables de entorno
+.env
+.env.*
+!.env.example

@@ -1,0 +1,6 @@
+@SigelabBackend_HostAddress = http://localhost:5205
+
+GET {{SigelabBackend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
