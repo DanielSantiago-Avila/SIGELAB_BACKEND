@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -121,6 +122,96 @@ namespace SigelabBackend.Controllers
                 return StatusCode(500, new { exito = false, mensaje = $"Error en el servidor: {ex.Message}" });
             }
         }
+
+
+        // GET: api/Auth/pantallas?usuario=demo26.encargado
+        // Consulta las pantallas autorizadas para un usuario.
+        [HttpGet("pantallas")]
+        public async Task<IActionResult> ObtenerPantallas(
+            [FromQuery] string usuario)
+        {
+            if (string.IsNullOrWhiteSpace(usuario))
+            {
+                return BadRequest(new
+                {
+                    exito = false,
+                    mensaje = "Debe proporcionar un usuario."
+                });
+            }
+
+            try
+            {
+                var pantallas = new List<Dictionary<string, object?>>();
+
+                string json = JsonSerializer.Serialize(new
+                {
+                    datos = new
+                    {
+                        usuario = usuario
+                    }
+                });
+
+                using (var connection = new SqlConnection(_connectionString))
+                {
+                    await connection.OpenAsync();
+
+                    using (var command = new SqlCommand(
+                        "dbo.sp_pantalla_listar_por_usuario",
+                        connection))
+                    {
+                        command.CommandType = CommandType.StoredProcedure;
+
+                        command.Parameters.Add(
+                            "@json",
+                            SqlDbType.NVarChar,
+                            -1
+                        ).Value = json;
+
+                        using (var reader = await command.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var pantalla = new Dictionary<string, object?>();
+
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    pantalla[reader.GetName(i)] =
+                                        reader.IsDBNull(i)
+                                            ? null
+                                            : reader.GetValue(i);
+                                }
+
+                                pantallas.Add(pantalla);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(new
+                {
+                    exito = true,
+                    mensaje = "Pantallas consultadas correctamente.",
+                    datos = pantallas
+                });
+            }
+            catch (SqlException)
+            {
+                return StatusCode(500, new
+                {
+                    exito = false,
+                    mensaje = "Error al consultar los permisos en la base de datos."
+                });
+            }
+            catch (Exception)
+            {
+                return StatusCode(500, new
+                {
+                    exito = false,
+                    mensaje = "Error interno del servidor."
+                });
+            }
+        }
+
     }
 
     public class LoginModel
