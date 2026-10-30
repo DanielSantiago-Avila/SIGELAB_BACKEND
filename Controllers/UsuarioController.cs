@@ -157,8 +157,8 @@ namespace SigelabBackend.Controllers
             catch (SqlException ex) { return RespuestaErrorSql(ex); }
             catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al cambiar estado." }); }
         }
-    }
-    // POST api/Usuario/biometria/registrar
+
+        // POST api/Usuario/biometria/registrar
         [HttpPost("biometria/registrar")]
         public async Task<IActionResult> RegistrarBiometria([FromBody] JsonElement body)
         {
@@ -166,10 +166,10 @@ namespace SigelabBackend.Controllers
             try
             {
                 var conjuntos = await EjecutarSpAsync("dbo.sp_biometria_registrar", body.GetRawText());
-                return Ok(new { exito = true, mensaje = "Biometría registrada correctamente.", datos = conjuntos });
+                return Ok(new { exito = true, mensaje = "Biometria registrada correctamente.", datos = conjuntos });
             }
             catch (SqlException ex) { return RespuestaErrorSql(ex); }
-            catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al registrar biometría." }); }
+            catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al registrar biometria." }); }
         }
 
         // POST api/Usuario/biometria/validar
@@ -183,6 +183,7 @@ namespace SigelabBackend.Controllers
                 return Ok(new { exito = true, es_valido = true, datos = conjuntos });
             }
             catch (SqlException ex) { return RespuestaErrorSql(ex); }
-            catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al validar biometría." }); }
+            catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al validar biometria." }); }
         }
+    }
 }
