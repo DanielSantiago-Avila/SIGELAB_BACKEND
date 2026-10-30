@@ -158,4 +158,31 @@ namespace SigelabBackend.Controllers
             catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al cambiar estado." }); }
         }
     }
+    // POST api/Usuario/biometria/registrar
+        [HttpPost("biometria/registrar")]
+        public async Task<IActionResult> RegistrarBiometria([FromBody] JsonElement body)
+        {
+            if (!EsObjetoJson(body)) return BadRequest(new { exito = false, mensaje = "Se requiere un objeto JSON." });
+            try
+            {
+                var conjuntos = await EjecutarSpAsync("dbo.sp_biometria_registrar", body.GetRawText());
+                return Ok(new { exito = true, mensaje = "Biometría registrada correctamente.", datos = conjuntos });
+            }
+            catch (SqlException ex) { return RespuestaErrorSql(ex); }
+            catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al registrar biometría." }); }
+        }
+
+        // POST api/Usuario/biometria/validar
+        [HttpPost("biometria/validar")]
+        public async Task<IActionResult> ValidarBiometria([FromBody] JsonElement body)
+        {
+            if (!EsObjetoJson(body)) return BadRequest(new { exito = false, mensaje = "Se requiere un objeto JSON." });
+            try
+            {
+                var conjuntos = await EjecutarSpAsync("dbo.sp_biometria_validar", body.GetRawText());
+                return Ok(new { exito = true, es_valido = true, datos = conjuntos });
+            }
+            catch (SqlException ex) { return RespuestaErrorSql(ex); }
+            catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al validar biometría." }); }
+        }
 }
