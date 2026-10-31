@@ -1,7 +1,10 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.SqlClient;
 using System.Data;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace SigelabBackend.Controllers
 {
@@ -18,8 +21,21 @@ namespace SigelabBackend.Controllers
                 ?? throw new InvalidOperationException("Falta configurar SqlServerConn o DefaultConnection.");
         }
 
-        // Devuelve todos los conjuntos de resultados que entregue el procedimiento.
-        // Evita depender de columnas concretas o de que el SP retorne una columna 'mensaje'.
+        // Mismo algoritmo SHA-256 hexadecimal que utiliza AuthController.
+        private string HashPassword(string password)
+        {
+            using (var sha256 = SHA256.Create())
+            {
+                byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
+                StringBuilder builder = new StringBuilder();
+                for (int i = 0; i < bytes.Length; i++)
+                {
+                    builder.Append(bytes[i].ToString("x2"));
+                }
+                return builder.ToString();
+            }
+        }
+
         private async Task<List<List<Dictionary<string, object?>>>> EjecutarSpAsync(
             string nombreSp, string? json = null)
         {
@@ -55,7 +71,6 @@ namespace SigelabBackend.Controllers
 
         private static IActionResult RespuestaErrorSql(SqlException ex)
         {
-            // No exponer errores SQL internos al cliente.
             if (ex.Number >= 50000)
                 return new BadRequestObjectResult(new { exito = false, mensaje = ex.Message });
             return new ObjectResult(new { exito = false, mensaje = "Error al consultar la base de datos." })
@@ -102,37 +117,66 @@ namespace SigelabBackend.Controllers
         }
 
         // POST api/Usuario
-        // Body: {"usuarioAccionante":{"idUsuario":6},"datos":{...}}
+        // Recibe datos.passwordHash como CONTRASENA EN TEXTO PLANO.
+        // Reemplaza ese campo por un hash SHA-256 antes de llamar al SP.
         [HttpPost]
         public async Task<IActionResult> Crear([FromBody] JsonElement body)
         {
-            if (!EsObjetoJson(body)) return BadRequest(new { exito = false, mensaje = "Se requiere un objeto JSON." });
+            if (!EsObjetoJson(body))
+                return BadRequest(new { exito = false, mensaje = "Se requiere un objeto JSON." });
             try
             {
-                var conjuntos = await EjecutarSpAsync("dbo.sp_usuario_crear", body.GetRawText());
+                var json = JsonNode.Parse(body.GetRawText())!.AsObject();
+                if (json["datos"] is not JsonObject datos)
+                    return BadRequest(new { exito = false, mensaje = "Debe enviar el objeto datos." });
+
+                if (datos["passwordHash"] is not JsonValue passwordNode ||
+                    !passwordNode.TryGetValue<string>(out var password) ||
+                    string.IsNullOrWhiteSpace(password))
+                    return BadRequest(new { exito = false, mensaje = "Debe enviar datos.passwordHash con la contrasena." });
+
+                datos["passwordHash"] = HashPassword(password);
+                var conjuntos = await EjecutarSpAsync("dbo.sp_usuario_crear", json.ToJsonString());
                 return Ok(new { exito = true, mensaje = "Procedimiento de creación ejecutado.", datos = conjuntos });
             }
             catch (SqlException ex) { return RespuestaErrorSql(ex); }
+            catch (JsonException) { return BadRequest(new { exito = false, mensaje = "Formato JSON incorrecto." }); }
             catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al crear usuario." }); }
         }
 
         // PUT api/Usuario
+        // Si datos.passwordHash es null o no existe, conserva el hash en BD.
+        // Si se envia un valor, lo interpreta como contrasena y genera SHA-256.
         [HttpPut]
         public async Task<IActionResult> Actualizar([FromBody] JsonElement body)
         {
-            if (!EsObjetoJson(body)) return BadRequest(new { exito = false, mensaje = "Se requiere un objeto JSON." });
+            if (!EsObjetoJson(body))
+                return BadRequest(new { exito = false, mensaje = "Se requiere un objeto JSON." });
             try
             {
-                var conjuntos = await EjecutarSpAsync("dbo.sp_Usuario_Actualizar", body.GetRawText());
+                var json = JsonNode.Parse(body.GetRawText())!.AsObject();
+                if (json["datos"] is not JsonObject datos)
+                    return BadRequest(new { exito = false, mensaje = "Debe enviar el objeto datos." });
+
+                if (datos.TryGetPropertyValue("passwordHash", out JsonNode? passwordNode) && passwordNode != null)
+                {
+                    if (passwordNode is not JsonValue value ||
+                        !value.TryGetValue<string>(out var password) ||
+                        string.IsNullOrWhiteSpace(password))
+                        return BadRequest(new { exito = false, mensaje = "datos.passwordHash debe contener una contrasena valida o null." });
+
+                    datos["passwordHash"] = HashPassword(password);
+                }
+
+                var conjuntos = await EjecutarSpAsync("dbo.sp_Usuario_Actualizar", json.ToJsonString());
                 return Ok(new { exito = true, mensaje = "Procedimiento de actualización ejecutado.", datos = conjuntos });
             }
             catch (SqlException ex) { return RespuestaErrorSql(ex); }
+            catch (JsonException) { return BadRequest(new { exito = false, mensaje = "Formato JSON incorrecto." }); }
             catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al actualizar usuario." }); }
         }
 
         // PATCH api/Usuario/7/estado
-        // Body: {"usuarioAccionante":{"idUsuario":6}}
-        // El SP alterna activo/inactivo; NO acepta datos.activo.
         [HttpPatch("{id:int}/estado")]
         public async Task<IActionResult> CambiarEstado(int id, [FromBody] JsonElement body)
         {
