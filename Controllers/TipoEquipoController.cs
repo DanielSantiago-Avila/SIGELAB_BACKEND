@@ -14,9 +14,9 @@ namespace SigelabBackend.Controllers
 
         public TipoEquipoController(IConfiguration configuration)
         {
-            _connectionString = configuration.GetConnectionString("DefaultConnection")
-                ?? throw new InvalidOperationException(
-                    "No se encontró DefaultConnection.");
+            _connectionString = configuration.GetConnectionString("SqlServerConn")
+                ?? configuration.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("No existe una cadena de conexión SQL Server configurada.");
         }
 
         private async Task<IActionResult> EjecutarSP(
