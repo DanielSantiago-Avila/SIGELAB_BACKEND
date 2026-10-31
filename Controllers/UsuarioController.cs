@@ -158,6 +158,25 @@ namespace SigelabBackend.Controllers
             catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al cambiar estado." }); }
         }
 
+        // GET api/Usuario/12/biometria/estado
+        [HttpGet("{id:int}/biometria/estado")]
+        public async Task<IActionResult> EstadoBiometria(int id)
+        {
+            if (id <= 0) return BadRequest(new { exito = false, mensaje = "ID de usuario inválido." });
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(
+                    "SELECT COUNT(1) FROM dbo.BiometriaUsuario WHERE id_usuario = @id AND activo = 1", conn);
+                cmd.Parameters.Add("@id", SqlDbType.Int).Value = id;
+                var n = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                return Ok(new { exito = true, tiene_biometria = n > 0 });
+            }
+            catch (SqlException ex) { return RespuestaErrorSql(ex); }
+            catch (Exception) { return StatusCode(500, new { exito = false, mensaje = "Error interno al consultar biometria." }); }
+        }
+
         // POST api/Usuario/biometria/registrar
         [HttpPost("biometria/registrar")]
         public async Task<IActionResult> RegistrarBiometria([FromBody] JsonElement body)
