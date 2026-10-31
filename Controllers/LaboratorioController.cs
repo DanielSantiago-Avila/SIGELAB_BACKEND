@@ -9,148 +9,104 @@ namespace SigelabBackend.Controllers
     [Route("api/[controller]")]
     public class LaboratorioController : ControllerBase
     {
-        private readonly IConfiguration _configuration;
+        private readonly string _connectionString;
+        private readonly ILogger<LaboratorioController> _logger;
 
-        public LaboratorioController(IConfiguration configuration)
+        public LaboratorioController(IConfiguration configuration, ILogger<LaboratorioController> logger)
         {
-            _configuration = configuration;
+            _logger = logger;
+            _connectionString = configuration.GetConnectionString("SqlServerConn")
+                ?? configuration.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("No existe una cadena de conexión SQL Server configurada.");
+            if (string.IsNullOrWhiteSpace(_connectionString))
+                throw new InvalidOperationException("La cadena de conexión SQL Server está vacía.");
         }
 
-        // GET: api/Laboratorio
+        private async Task<IActionResult> EjecutarAsync(string sp, object? payload = null)
+        {
+            try
+            {
+                await using var connection = new SqlConnection(_connectionString);
+                await using var command = new SqlCommand("dbo." + sp, connection);
+                command.CommandType = CommandType.StoredProcedure;
+                if (payload != null)
+                {
+                    string json = payload is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(payload);
+                    command.Parameters.Add("@json", SqlDbType.NVarChar, -1).Value = json;
+                }
+                await connection.OpenAsync();
+                await using var reader = await command.ExecuteReaderAsync();
+                var rows = new List<Dictionary<string, object?>>();
+                while (await reader.ReadAsync())
+                {
+                    var row = new Dictionary<string, object?>();
+                    for (int i = 0; i < reader.FieldCount; i++)
+                        row[reader.GetName(i)] = await reader.IsDBNullAsync(i) ? null : reader.GetValue(i);
+                    rows.Add(row);
+                }
+                // Los SP de escritura retornan una sola fila con exito, mensaje e id_laboratorio.
+                if (sp is "sp_laboratorio_crear" or "sp_actualizar_laboratorio" or "sp_cambiar_estado_laboratorio")
+                    return rows.Count > 0 ? Ok(rows[0]) : StatusCode(500, new { exito = false, mensaje = "El procedimiento no devolvió confirmación." });
+                return Ok(rows);
+            }
+            catch (SqlException ex)
+            {
+                _logger.LogError(ex, "Error SQL en {StoredProcedure} (código {SqlNumber})", sp, ex.Number);
+                return StatusCode(500, new { exito = false, mensaje = "Error al ejecutar la operación en la base de datos." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error al ejecutar {StoredProcedure}", sp);
+                return StatusCode(500, new { exito = false, mensaje = "Error interno del servidor." });
+            }
+        }
+
+        // GET /api/Laboratorio?activo=true (sin filtro: todos)
         [HttpGet]
-        public async Task<IActionResult> ObtenerLaboratorios()
-        {
-            var lista = new List<object>();
-            string connectionString = _configuration.GetConnectionString("DefaultConnection");
-
-            using (SqlConnection conn = new SqlConnection(connectionString))
+        public Task<IActionResult> ObtenerLaboratorios([FromQuery] bool? activo = null) =>
+            EjecutarAsync("sp_obtener_laboratorio", new
             {
-                await conn.OpenAsync();
-                string query = "SELECT id_laboratorio, codigo, nombre, ubicacion, descripcion, activo, capacidad FROM dbo.Laboratorio ORDER BY id_laboratorio DESC";
+                usuarioAccionante = new { },
+                datos = new { activo }
+            });
 
-                using (SqlCommand cmd = new SqlCommand(query, conn))
-                {
-                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
-                    {
-                        while (await reader.ReadAsync())
-                        {
-                            lista.Add(new
-                            {
-                                id_laboratorio = reader["id_laboratorio"],
-                                codigo = reader["codigo"].ToString(),
-                                nombre = reader["nombre"].ToString(),
-                                ubicacion = reader["ubicacion"] != DBNull.Value ? reader["ubicacion"].ToString() : "",
-                                descripcion = reader["descripcion"] != DBNull.Value ? reader["descripcion"].ToString() : "",
-                                activo = Convert.ToBoolean(reader["activo"]),
-                                capacidad = reader["capacidad"] != DBNull.Value ? Convert.ToInt32(reader["capacidad"]) : 0
-                            });
-                        }
-                    }
-                }
-            }
+        // GET /api/Laboratorio/activos-combo
+        [HttpGet("activos-combo")]
+        public Task<IActionResult> ListarActivosCombo() =>
+            EjecutarAsync("sp_laboratorio_listar_activos_combo");
 
-            return Ok(lista);
-        }
+        // GET /api/Laboratorio/equipos-combo
+        [HttpGet("equipos-combo")]
+        public Task<IActionResult> ListarLaboratoriosParaEquipo() =>
+            EjecutarAsync("sp_equipo_listar_laboratorios_combo");
 
-        // POST: api/Laboratorio
+        // POST /api/Laboratorio
         [HttpPost]
-        public async Task<IActionResult> CrearLaboratorio([FromBody] JsonElement jsonBody)
-        {
-            try
-            {
-                string connectionString = _configuration.GetConnectionString("DefaultConnection");
-                string jsonString = jsonBody.GetRawText();
+        public Task<IActionResult> CrearLaboratorio([FromBody] JsonElement json) =>
+            EjecutarAsync("sp_laboratorio_crear", json);
 
-                using (SqlConnection conn = new SqlConnection(connectionString))
-                {
-                    await conn.OpenAsync();
-                    using (SqlCommand cmd = new SqlCommand("dbo.sp_laboratorio_crear", conn))
-                    {
-                        cmd.CommandType = CommandType.StoredProcedure;
-                        cmd.Parameters.AddWithValue("@json", jsonString);
-
-                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
-                        {
-                            if (await reader.ReadAsync())
-                            {
-                                return Ok(new
-                                {
-                                    exito = true,
-                                    mensaje = reader["mensaje"]?.ToString() ?? "Laboratorio creado correctamente"
-                                });
-                            }
-                        }
-                    }
-                }
-                return Ok(new { exito = true });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { exito = false, mensaje = "Error en BD: " + ex.Message });
-            }
-        }
-
-        // PUT: api/Laboratorio
-        // Modifica un laboratorio existente
+        // PUT /api/Laboratorio
         [HttpPut]
-        public async Task<IActionResult> ActualizarLaboratorio([FromBody] JsonElement jsonBody)
+        public Task<IActionResult> ActualizarLaboratorio([FromBody] JsonElement json) =>
+            EjecutarAsync("sp_actualizar_laboratorio", json);
+
+        // PATCH /api/Laboratorio/{id}/estado
+        // Body: {"usuarioAccionante":{"idUsuario":5},"datos":{"activo":false}}
+        [HttpPatch("{id:int}/estado")]
+        public Task<IActionResult> CambiarEstado(int id, [FromBody] JsonElement json)
         {
-            try
+            if (!json.TryGetProperty("usuarioAccionante", out var actor) ||
+                !actor.TryGetProperty("idUsuario", out var idUsuario) ||
+                !idUsuario.TryGetInt32(out int userId) || userId <= 0 ||
+                !json.TryGetProperty("datos", out var datos) ||
+                !datos.TryGetProperty("activo", out var activo) ||
+                (activo.ValueKind != JsonValueKind.True && activo.ValueKind != JsonValueKind.False))
+                return Task.FromResult<IActionResult>(BadRequest(new { exito = false, mensaje = "Se requiere usuarioAccionante.idUsuario y datos.activo booleano." }));
+            return EjecutarAsync("sp_cambiar_estado_laboratorio", new
             {
-                string connectionString = _configuration.GetConnectionString("DefaultConnection");
-                string jsonString = jsonBody.GetRawText();
-
-                using (SqlConnection conn = new SqlConnection(connectionString))
-                {
-                    await conn.OpenAsync();
-                    // Invoca el SP de actualización de tu BD
-                    using (SqlCommand cmd = new SqlCommand("dbo.sp_laboratorio_actualizar", conn))
-                    {
-                        cmd.CommandType = CommandType.StoredProcedure;
-                        cmd.Parameters.AddWithValue("@json", jsonString);
-
-                        await cmd.ExecuteNonQueryAsync();
-                    }
-                }
-
-                return Ok(new { exito = true, mensaje = "Laboratorio actualizado correctamente" });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { exito = false, mensaje = "Error al actualizar laboratorio: " + ex.Message });
-            }
-        }
-
-        // PATCH: api/Laboratorio/{id}/estado
-        // Cambia el estado (Activo/Inactivo)
-        [HttpPatch("{id}/estado")]
-        public async Task<IActionResult> CambiarEstado(int id, [FromBody] JsonElement jsonBody)
-        {
-            try
-            {
-                string connectionString = _configuration.GetConnectionString("DefaultConnection");
-                bool nuevoEstado = jsonBody.GetProperty("activo").GetBoolean();
-
-                using (SqlConnection conn = new SqlConnection(connectionString))
-                {
-                    await conn.OpenAsync();
-                    string query = "UPDATE dbo.Laboratorio SET activo = @activo WHERE id_laboratorio = @id";
-
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@activo", nuevoEstado);
-                        cmd.Parameters.AddWithValue("@id", id);
-
-                        await cmd.ExecuteNonQueryAsync();
-                    }
-                }
-
-                return Ok(new { exito = true, mensaje = "Estado actualizado correctamente" });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { exito = false, mensaje = "Error al cambiar estado: " + ex.Message });
-            }
+                usuarioAccionante = new { idUsuario = userId },
+                datos = new { id_laboratorio = id, activo = activo.GetBoolean() }
+            });
         }
     }
 }

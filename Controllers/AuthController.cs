@@ -43,8 +43,10 @@ namespace SigelabBackend.Controllers
                 {
                     await connection.OpenAsync();
 
-                    string query = @"SELECT id_usuario, nombre, apellido, usuario, activo 
-                                     FROM dbo.Usuario 
+                    string query = @"SELECT U.id_usuario, U.nombre, U.apellido, U.usuario, U.activo, R.id_rol, R.nombre AS nombre_rol
+                                     FROM dbo.Usuario AS U
+                                     INNER JOIN dbo.Rol AS R
+                                     ON R.id_rol = U.id_rol
                                      WHERE usuario = @usuario AND password_hash = @passHash";
 
                     using (var command = new SqlCommand(query, connection))
@@ -62,6 +64,8 @@ namespace SigelabBackend.Controllers
                                     nombre = reader["nombre"].ToString(),
                                     apellido = reader["apellido"].ToString(),
                                     usuario = reader["usuario"].ToString(),
+                                    id_rol = reader["id_rol"].ToString(),
+                                    nombre_rol = reader["nombre_rol"].ToString(),
                                     activo = reader["activo"]
                                 };
 
