@@ -1,0 +1,13 @@
+[Unit]
+Description=SIGELAB servicio de reconocimiento facial
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/sigelab-face
+Environment=MODEL_DIR=/opt/sigelab-face/models
+ExecStart=/opt/sigelab-face/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8001 --workers 1
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
